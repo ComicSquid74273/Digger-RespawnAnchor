@@ -121,6 +121,13 @@ public final class AnchorDigger extends Module {
         .build()
     );
 
+    private final Setting<Boolean> blastShield = sgSafety.add(new BoolSetting.Builder()
+        .name("blast-shield")
+        .description("Places a glowstone block on the player side of the anchor before detonating to block self-damage.")
+        .defaultValue(true)
+        .build()
+    );
+
     private BlockPos activeAnchorPos;
     private int placeDelayTimer;
     private int chargeDelayTimer;
@@ -134,7 +141,8 @@ public final class AnchorDigger extends Module {
     private enum ActionType {
         Place,
         Charge,
-        Detonate
+        Detonate,
+        Shield
     }
 
     public AnchorDigger() {
@@ -277,6 +285,24 @@ public final class AnchorDigger extends Module {
         if (detonateDelayTimer < detonateDelay.get()) return;
         if (!isSafe(pos)) return;
 
+        // If blast shield is enabled, place a glowstone block on our side of the anchor before detonating
+        if (blastShield.get()) {
+            BlockPos shieldPos = getShieldPos(pos);
+            if (shieldPos != null) {
+                FindItemResult glowstone = findGlowstone();
+                if (glowstone.found()) {
+                    Direction side = BlockUtils.getPlaceSide(shieldPos);
+                    BlockPos neighbour = side == null ? shieldPos : shieldPos.relative(side);
+                    Vec3 hitPos = Vec3.atCenterOf(shieldPos);
+                    if (side != null) {
+                        hitPos = hitPos.add(side.getStepX() * 0.5, side.getStepY() * 0.5, side.getStepZ() * 0.5);
+                    }
+                    BlockHitResult bhr = new BlockHitResult(hitPos, side == null ? Direction.UP : side.getOpposite(), neighbour, false);
+                    interact(glowstone, bhr, ActionType.Shield, shieldPos);
+                }
+            }
+        }
+
         FindItemResult detonator = findDetonator();
         if (!detonator.found()) return;
 
@@ -284,6 +310,24 @@ public final class AnchorDigger extends Module {
         BlockHitResult bhr = new BlockHitResult(center, Direction.UP, pos, true);
 
         interact(detonator, bhr, ActionType.Detonate, pos);
+    }
+
+    private BlockPos getShieldPos(BlockPos anchor) {
+        if (mc.player == null) return null;
+
+        // Find the relative vector direction from anchor to player eyes
+        Vec3 dir = mc.player.getEyePosition().subtract(Vec3.atCenterOf(anchor));
+        Direction closestDir = Direction.getNearest((int) dir.x, (int) dir.y, (int) dir.z, Direction.UP);
+
+        // Calculate block position between player and anchor
+        BlockPos targetPos = anchor.relative(closestDir);
+
+        // Verify if we can place a block there
+        if (mc.level.getBlockState(targetPos).canBeReplaced()) {
+            return targetPos;
+        }
+
+        return null;
     }
 
     private void interact(FindItemResult item, BlockHitResult hitResult, ActionType type, BlockPos targetPos) {
